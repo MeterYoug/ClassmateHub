@@ -31,17 +31,12 @@
 
 先启动 MySQL 和 Redis。后端默认连接本机 MySQL 的 `classmate_hub` 数据库，Redis 默认使用 `localhost:6380` 和数据库索引 `5`；与本机环境不同时，请调整连接配置。
 
-在启动进程中设置以下环境变量：
+启动前，请按自己的本地环境修改 `ClassmateHub-springboot/ruoyi-admin/src/main/resources` 下的配置：
 
-| 变量 | 用途 |
-| --- | --- |
-| `DB_USERNAME`、`DB_PASSWORD` | MySQL 账号和密码 |
-| `TOKEN_SECRET` | 令牌签名密钥，使用自行生成的随机密钥 |
-| `DRUID_USERNAME`、`DRUID_PASSWORD` | Druid 监控页面账号和密码 |
-| `REDIS_PASSWORD` | Redis 密码，无密码时可不设置 |
-| `UPLOAD_PATH` | 上传文件目录，可选，默认 `./uploadPath` |
+- `application-druid.yml`：将主数据源的数据库地址、账号和密码改为本地 MySQL 的配置。Druid 监控账号和密码使用环境变量占位符，可设置对应环境变量，或改为本地配置。
+- `application.yml`：将 Redis 地址、端口、数据库索引和密码改为本地配置；无密码时密码留空。同时将 `token.secret` 改为自己生成的随机密钥，上传目录可按需调整。
 
-在 IDEA 中启动时，在 `RuoYiApplication` 的「运行／调试配置」中设置环境变量，再运行 `RuoYiApplication`。也可以在已设置上述变量的终端中打包并启动：
+配置完成后，可以在 IDEA 中运行 `RuoYiApplication`，也可以在终端中打包并启动：
 
 ```bash
 cd ClassmateHub-springboot
@@ -66,7 +61,7 @@ npm run dev
 
 ### 常见启动问题
 
-如果出现 `Could not resolve placeholder 'TOKEN_SECRET'`，请检查启动后端的终端或 IDEA 运行配置是否设置了 `TOKEN_SECRET`。如果前端接口请求没有走 `/dev-api`，请检查启动前设置的 `VITE_APP_BASE_API`，并确认后端已经启动。
+如果后端无法连接数据库或 Redis，请检查对应配置及服务状态。如果前端接口请求没有走 `/dev-api`，请检查启动前设置的 `VITE_APP_BASE_API`，并确认后端已经启动。
 
 ## 老师使用流程
 
