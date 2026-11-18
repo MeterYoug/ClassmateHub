@@ -34,6 +34,10 @@
             <span class="summary-value">{{ plan.classroomName || "-" }}</span>
           </div>
           <div class="summary-item">
+            <span class="summary-label">生成方式</span>
+            <span class="summary-value">{{ optionLabel(typeOptions, plan.planType) }}</span>
+          </div>
+          <div class="summary-item">
             <span class="summary-label">方案状态</span>
             <span class="summary-value">{{ optionLabel(statusOptions, plan.planStatus) }}</span>
           </div>
@@ -178,6 +182,18 @@
   </div>
 </section>
 <section class="score-section">
+            <div v-if="plan.aiReasoning || plan.aiPrompt" class="ai-reasoning-card">
+              <div class="ai-reasoning-header">
+                <span class="side-panel-title">AI 排座说明</span>
+                <el-tag :type="plan.planType === 'AI_FALLBACK' ? 'warning' : 'success'" size="small" effect="plain">
+                  {{ plan.planType === 'AI_FALLBACK' ? '规则引擎兜底' : 'AI 大模型生成' }}
+                </el-tag>
+              </div>
+              <div v-if="plan.aiPrompt" class="ai-prompt-box">
+                <span class="ai-prompt-label">排座要求：</span>{{ plan.aiPrompt }}
+              </div>
+              <div v-if="plan.aiReasoning" class="ai-reasoning-text">{{ plan.aiReasoning }}</div>
+            </div>
             <div class="section-title section-title-with-tools">
               <span>未安排学生（{{ unassignedStudents.length }}）</span>
               <el-input v-model="unassignedKeyword" clearable size="small" placeholder="按姓名或学号查找" />
@@ -266,6 +282,13 @@ import { formatAssignmentPositionReadable } from "./detailComparisonText"
 const route = useRoute()
 const router = useRouter()
 const { proxy } = getCurrentInstance()
+
+const typeOptions = [
+  { value: "AUTO", label: "规则引擎生成" },
+  { value: "AI", label: "AI 大模型生成" },
+  { value: "AI_FALLBACK", label: "AI 降级兜底" },
+  { value: "MANUAL", label: "手动创建" }
+]
 
 const statusOptions = [
   { value: "DRAFT", label: "草稿" },
@@ -1494,6 +1517,44 @@ loadDetail()
 
 .score-title {
   margin-top: 18px;
+}
+
+.ai-reasoning-card {
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--seating-border);
+  border-radius: 6px;
+  background: var(--seating-primary-soft, #eaf4f3);
+}
+
+.ai-reasoning-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.ai-prompt-box {
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--seating-text);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.ai-prompt-label {
+  color: var(--seating-text-secondary);
+  font-weight: 600;
+}
+
+.ai-reasoning-text {
+  color: var(--seating-text);
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
 }
 
 .unassigned-panel {

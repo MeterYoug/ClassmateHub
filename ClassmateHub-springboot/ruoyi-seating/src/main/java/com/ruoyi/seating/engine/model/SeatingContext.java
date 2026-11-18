@@ -1,6 +1,8 @@
 package com.ruoyi.seating.engine.model;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import com.ruoyi.seating.domain.SeatRule;
 import com.ruoyi.seating.domain.SeatPosition;
 import com.ruoyi.seating.domain.SeatStudent;
@@ -22,6 +24,9 @@ public class SeatingContext
     private long randomSeed;
 
     private int optimizeIterations;
+
+    /** 已锁定座位映射（studentId -> seatId） */
+    private Map<Long, Long> lockedSeatByStudentId = Collections.emptyMap();
 
     public SeatingContext(List<SeatStudent> students, List<SeatPosition> seats)
     {
@@ -68,5 +73,15 @@ public class SeatingContext
     public int getOptimizeIterations()
     {
         return optimizeIterations;
+    }
+
+    public Map<Long, Long> getLockedSeatByStudentId()
+    {
+        return lockedSeatByStudentId == null ? Collections.emptyMap() : lockedSeatByStudentId;
+    }
+
+    public void setLockedSeatByStudentId(Map<Long, Long> lockedSeatByStudentId)
+    {
+        this.lockedSeatByStudentId = lockedSeatByStudentId;
     }
 }

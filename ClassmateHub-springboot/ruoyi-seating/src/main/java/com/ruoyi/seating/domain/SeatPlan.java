@@ -39,8 +39,8 @@ public class SeatPlan extends BaseEntity
     @Excel(name = "方案名称")
     private String planName;
 
-    /** 方案类型（AUTO自动 MANUAL手动） */
-    @Excel(name = "方案类型", readConverterExp = "A=UTO自动,M=ANUAL手动")
+    /** 方案类型（AUTO自动 AI大模型 AI_FALLBACK降级 MANUAL手动） */
+    @Excel(name = "方案类型", readConverterExp = "AUTO=规则生成,AI=AI生成,AI_FALLBACK=AI降级,MANUAL=手动创建")
     private String planType;
 
     /** 方案状态（DRAFT草稿 ACTIVE启用 ARCHIVED归档） */
@@ -60,6 +60,15 @@ public class SeatPlan extends BaseEntity
     @JsonFormat(pattern = "yyyy-MM-dd")
     @Excel(name = "启用时间", width = 30, dateFormat = "yyyy-MM-dd")
     private Date activeTime;
+
+    /** AI配置ID */
+    private Long aiConfigId;
+
+    /** AI排座补充要求 */
+    private String aiPrompt;
+
+    /** AI排座思路说明 */
+    private String aiReasoning;
 
     /** 删除标志（0存在 2删除） */
     private String delFlag;
@@ -172,6 +181,36 @@ public class SeatPlan extends BaseEntity
     public Date getActiveTime() 
     {
         return activeTime;
+    }
+
+    public Long getAiConfigId()
+    {
+        return aiConfigId;
+    }
+
+    public void setAiConfigId(Long aiConfigId)
+    {
+        this.aiConfigId = aiConfigId;
+    }
+
+    public String getAiPrompt()
+    {
+        return aiPrompt;
+    }
+
+    public void setAiPrompt(String aiPrompt)
+    {
+        this.aiPrompt = aiPrompt;
+    }
+
+    public String getAiReasoning()
+    {
+        return aiReasoning;
+    }
+
+    public void setAiReasoning(String aiReasoning)
+    {
+        this.aiReasoning = aiReasoning;
     }
 
     public void setDelFlag(String delFlag) 

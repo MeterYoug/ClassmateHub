@@ -1,34 +1,53 @@
 package com.ruoyi.seating.service.impl;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.common.utils.DateUtils;
+import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.common.utils.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.ruoyi.seating.domain.SeatAiConfig;
 import com.ruoyi.seating.domain.SeatAssignment;
+import com.ruoyi.seating.domain.SeatClassroom;
+import com.ruoyi.seating.domain.SeatExam;
 import com.ruoyi.seating.domain.SeatPlanScore;
 import com.ruoyi.seating.domain.SeatPosition;
 import com.ruoyi.seating.domain.SeatRule;
 import com.ruoyi.seating.domain.SeatStudent;
 import com.ruoyi.seating.domain.SeatStudentRelation;
+import com.ruoyi.seating.domain.SeatStudentScore;
 import com.ruoyi.seating.engine.SeatingEngine;
+import com.ruoyi.seating.engine.ai.AiSeatingCoordinator;
+import com.ruoyi.seating.engine.model.AiSeatingRequest;
+import com.ruoyi.seating.engine.model.AiSeatingResponse;
 import com.ruoyi.seating.engine.model.SeatingAssignmentResult;
 import com.ruoyi.seating.engine.model.SeatingContext;
 import com.ruoyi.seating.engine.model.SeatingResult;
 import com.ruoyi.seating.engine.model.SeatingScoreItem;
 import com.ruoyi.seating.mapper.SeatAssignmentMapper;
+import com.ruoyi.seating.mapper.SeatClassroomMapper;
+import com.ruoyi.seating.mapper.SeatExamMapper;
 import com.ruoyi.seating.mapper.SeatPlanMapper;
 import com.ruoyi.seating.mapper.SeatPlanScoreMapper;
 import com.ruoyi.seating.mapper.SeatPositionMapper;
 import com.ruoyi.seating.mapper.SeatRuleMapper;
 import com.ruoyi.seating.mapper.SeatStudentMapper;
 import com.ruoyi.seating.mapper.SeatStudentRelationMapper;
+import com.ruoyi.seating.mapper.SeatStudentScoreMapper;
 import com.ruoyi.seating.domain.SeatPlan;
+import com.ruoyi.seating.service.ISeatAiConfigService;
 import com.ruoyi.seating.service.ISeatPlanService;
+import com.ruoyi.seating.service.ISeatUserAiPermissionService;
 
 /**
  * 排座方案Service业务层处理
@@ -62,6 +81,24 @@ public class SeatPlanServiceImpl implements ISeatPlanService
 
     @Autowired
     private SeatingEngine seatingEngine;
+
+    @Autowired
+    private AiSeatingCoordinator aiSeatingCoordinator;
+
+    @Autowired
+    private ISeatAiConfigService seatAiConfigService;
+
+    @Autowired
+    private ISeatUserAiPermissionService seatUserAiPermissionService;
+
+    @Autowired
+    private SeatClassroomMapper seatClassroomMapper;
+
+    @Autowired
+    private SeatExamMapper seatExamMapper;
+
+    @Autowired
+    private SeatStudentScoreMapper seatStudentScoreMapper;
 
     /**
      * 查询排座方案
@@ -157,17 +194,19 @@ public class SeatPlanServiceImpl implements ISeatPlanService
 
         SeatPosition seatQuery = new SeatPosition();
         seatQuery.setClassroomId(seatPlan.getClassroomId());
-        seatQuery.setSeatType("0");
-        seatQuery.setIsAvailable("1");
-        seatQuery.setStatus("0");
-        List<SeatPosition> seats = seatPositionMapper.selectSeatPositionList(seatQuery);
-        if (seats.isEmpty())
+        List<SeatPosition> allSeats = seatPositionMapper.selectSeatPositionList(seatQuery);
+        List<SeatPosition> usableSeats = allSeats.stream()
+                .filter(item -> "0".equals(item.getSeatType())
+                        && "1".equals(item.getIsAvailable())
+                        && !"1".equals(item.getStatus()))
+                .toList();
+        if (usableSeats.isEmpty())
         {
             throw new ServiceException("教室没有可用座位");
         }
-        if (seats.size() < students.size())
+        if (usableSeats.size() < students.size())
         {
-            throw new ServiceException("可用座位数不足，学生 " + students.size() + " 人，可用座位 " + seats.size() + " 个");
+            throw new ServiceException("可用座位数不足，学生 " + students.size() + " 人，可用座位 " + usableSeats.size() + " 个");
         }
 
         SeatRule ruleQuery = new SeatRule();
@@ -181,17 +220,75 @@ public class SeatPlanServiceImpl implements ISeatPlanService
         relationQuery.setEnabled("1");
         List<SeatStudentRelation> relations = seatStudentRelationMapper.selectSeatStudentRelationList(relationQuery);
 
-        long randomSeed = resolveRandomSeed(seatPlan, students.size(), seats.size());
-        int optimizeIterations = resolveOptimizeIterations(seatPlan, students.size());
-        SeatingResult result = seatingEngine.generate(
-                new SeatingContext(students, seats, rules, relations, randomSeed, optimizeIterations));
+        boolean keepLocked = paramBoolean(seatPlan, "keepLockedSeats", false);
+        Map<Long, Long> lockedSeatByStudentId = keepLocked
+                ? loadActivePlanLockedSeats(seatPlan.getClassId(), seatPlan.getClassroomId())
+                : Collections.emptyMap();
+
+        boolean aiMode = "AI".equalsIgnoreCase(seatPlan.getPlanType())
+                || "AI".equalsIgnoreCase(paramString(seatPlan, "generateMode"));
+
+        SeatingResult result;
+        String finalPlanType = "AUTO";
+        Long usedAiConfigId = null;
+        String teacherPrompt = StringUtils.trim(seatPlan.getAiPrompt());
+        String aiReasoning = null;
+
+        if (aiMode)
+        {
+            checkCurrentUserAiPermission();
+            SeatAiConfig aiConfig = resolveAiConfig(seatPlan.getAiConfigId());
+            usedAiConfigId = aiConfig.getConfigId();
+            boolean autoFallback = paramBoolean(seatPlan, "autoFallback", true);
+            SeatClassroom classroom = seatClassroomMapper.selectSeatClassroomByClassroomId(seatPlan.getClassroomId());
+
+            AiSeatingRequest aiRequest = new AiSeatingRequest();
+            aiRequest.setAiConfig(aiConfig);
+            aiRequest.setPlainApiKey(aiConfig.getApiKey());
+            aiRequest.setPlatformPosition(classroom == null ? "FRONT" : classroom.getPlatformPosition());
+            aiRequest.setStudents(students);
+            aiRequest.setSeats(allSeats);
+            aiRequest.setRules(rules);
+            aiRequest.setRelations(relations);
+            aiRequest.setLockedSeatByStudentId(lockedSeatByStudentId);
+            aiRequest.setStudentSubjectSummaries(loadCurrentExamSubjectSummaries(seatPlan.getClassId()));
+            aiRequest.setTeacherPrompt(teacherPrompt);
+
+            try
+            {
+                AiSeatingResponse aiResponse = aiSeatingCoordinator.generateWithAi(aiRequest);
+                result = aiResponse.getSeatingResult();
+                finalPlanType = "AI";
+                aiReasoning = truncateText(aiResponse.getReasoning(), 1900);
+            }
+            catch (Exception e)
+            {
+                if (!autoFallback)
+                {
+                    throw new ServiceException("AI 大模型排座失败：" + e.getMessage());
+                }
+                SeatingContext fallbackCtx = buildLocalContext(seatPlan, students, usableSeats, rules, relations,
+                        lockedSeatByStudentId);
+                result = seatingEngine.generate(fallbackCtx);
+                finalPlanType = "AI_FALLBACK";
+                aiReasoning = truncateText("AI 大模型响应异常，已自动切换本地规则引擎兜底生成（原因：" + e.getMessage() + "）", 1900);
+            }
+        }
+        else
+        {
+            SeatingContext localCtx = buildLocalContext(seatPlan, students, usableSeats, rules, relations,
+                    lockedSeatByStudentId);
+            result = seatingEngine.generate(localCtx);
+        }
+
         if (result.getConflicts() != null && !result.getConflicts().isEmpty())
         {
             throw new ServiceException("硬规则冲突：" + String.join("；", result.getConflicts()));
         }
-        SeatPlan generatedPlan = buildGeneratedPlan(seatPlan, result, operName);
+        SeatPlan generatedPlan = buildGeneratedPlan(seatPlan, result, finalPlanType, usedAiConfigId,
+                teacherPrompt, aiReasoning, operName);
         insertSeatPlan(generatedPlan);
-        saveAssignments(generatedPlan, result, operName);
+        saveAssignments(generatedPlan, result, lockedSeatByStudentId, operName);
         saveScores(generatedPlan, result);
         return generatedPlan;
     }
@@ -257,6 +354,9 @@ public class SeatPlanServiceImpl implements ISeatPlanService
         copiedPlan.setPlanType("MANUAL");
         copiedPlan.setPlanStatus("DRAFT");
         copiedPlan.setTotalScore(seatPlan.getTotalScore());
+        copiedPlan.setAiConfigId(seatPlan.getAiConfigId());
+        copiedPlan.setAiPrompt(seatPlan.getAiPrompt());
+        copiedPlan.setAiReasoning(seatPlan.getAiReasoning());
         copiedPlan.setGeneratedAt(DateUtils.getNowDate());
         copiedPlan.setDelFlag("0");
         copiedPlan.setCreateBy(operName);
@@ -268,21 +368,170 @@ public class SeatPlanServiceImpl implements ISeatPlanService
         return copiedPlan;
     }
 
-    private SeatPlan buildGeneratedPlan(SeatPlan seatPlan, SeatingResult result, String operName)
+    private SeatPlan buildGeneratedPlan(SeatPlan seatPlan, SeatingResult result, String planType,
+            Long aiConfigId, String aiPrompt, String aiReasoning, String operName)
     {
         SeatPlan generatedPlan = new SeatPlan();
         generatedPlan.setClassId(seatPlan.getClassId());
         generatedPlan.setClassroomId(seatPlan.getClassroomId());
+        String prefix = "AI".equals(planType) ? "AI排座-" : "智能排座-";
         generatedPlan.setPlanName(normalizePlanName(seatPlan.getPlanName(),
-                "智能排座-" + DateUtils.dateTimeNow()));
-        generatedPlan.setPlanType("AUTO");
+                prefix + DateUtils.dateTimeNow()));
+        generatedPlan.setPlanType(planType);
         generatedPlan.setPlanStatus(StringUtils.defaultIfBlank(seatPlan.getPlanStatus(), "DRAFT"));
         generatedPlan.setTotalScore(result.getTotalScore());
+        generatedPlan.setAiConfigId(aiConfigId);
+        generatedPlan.setAiPrompt(truncateText(aiPrompt, 950));
+        generatedPlan.setAiReasoning(aiReasoning);
         generatedPlan.setGeneratedAt(DateUtils.getNowDate());
         generatedPlan.setDelFlag("0");
         generatedPlan.setCreateBy(operName);
         generatedPlan.setRemark(seatPlan.getRemark());
         return generatedPlan;
+    }
+
+    private SeatingContext buildLocalContext(SeatPlan seatPlan, List<SeatStudent> students,
+            List<SeatPosition> usableSeats, List<SeatRule> rules, List<SeatStudentRelation> relations,
+            Map<Long, Long> lockedSeatByStudentId)
+    {
+        long randomSeed = resolveRandomSeed(seatPlan, students.size(), usableSeats.size());
+        int optimizeIterations = resolveOptimizeIterations(seatPlan, students.size());
+        SeatingContext ctx = new SeatingContext(students, usableSeats, rules, relations, randomSeed, optimizeIterations);
+        ctx.setLockedSeatByStudentId(lockedSeatByStudentId);
+        return ctx;
+    }
+
+    private void checkCurrentUserAiPermission()
+    {
+        Long userId = null;
+        try
+        {
+            userId = SecurityUtils.getUserId();
+        }
+        catch (Exception ignored)
+        {
+        }
+        if (userId != null && !seatUserAiPermissionService.hasAiSeatingPermission(userId))
+        {
+            throw new ServiceException("当前账号尚未开通 AI 大模型排座权限，请联系管理员授权");
+        }
+    }
+
+    private SeatAiConfig resolveAiConfig(Long configId)
+    {
+        SeatAiConfig config = configId != null
+                ? seatAiConfigService.selectSeatAiConfigWithPlainKey(configId)
+                : seatAiConfigService.selectActiveDefaultOrFirst();
+        if (config == null || !"0".equals(config.getStatus()))
+        {
+            throw new ServiceException("未找到可用的 AI 模型配置，请先在「AI 模型配置」中添加并启用模型");
+        }
+        return config;
+    }
+
+    private Map<Long, Long> loadActivePlanLockedSeats(Long classId, Long classroomId)
+    {
+        SeatPlan activeQuery = new SeatPlan();
+        activeQuery.setClassId(classId);
+        activeQuery.setClassroomId(classroomId);
+        activeQuery.setPlanStatus("ACTIVE");
+        List<SeatPlan> activePlans = seatPlanMapper.selectSeatPlanList(activeQuery);
+        if (activePlans.isEmpty())
+        {
+            return Collections.emptyMap();
+        }
+        SeatAssignment assignQuery = new SeatAssignment();
+        assignQuery.setPlanId(activePlans.get(0).getPlanId());
+        List<SeatAssignment> assignments = seatAssignmentMapper.selectSeatAssignmentList(assignQuery);
+        Map<Long, Long> locked = new HashMap<>();
+        for (SeatAssignment item : assignments)
+        {
+            if ("1".equals(item.getIsLocked()) && item.getStudentId() != null && item.getSeatId() != null)
+            {
+                locked.put(item.getStudentId(), item.getSeatId());
+            }
+        }
+        return locked;
+    }
+
+    private Map<Long, String> loadCurrentExamSubjectSummaries(Long classId)
+    {
+        SeatExam examQuery = new SeatExam();
+        examQuery.setClassId(classId);
+        examQuery.setStatus("0");
+        List<SeatExam> exams = seatExamMapper.selectSeatExamList(examQuery);
+        if (exams.isEmpty())
+        {
+            return Collections.emptyMap();
+        }
+        SeatExam picked = exams.stream()
+                .filter(item -> "1".equals(item.getIsCurrent()))
+                .findFirst()
+                .orElse(exams.get(0));
+        SeatStudentScore scoreQuery = new SeatStudentScore();
+        scoreQuery.setExamId(picked.getExamId());
+        List<SeatStudentScore> scores = seatStudentScoreMapper.selectSeatStudentScoreList(scoreQuery);
+        if (scores.isEmpty())
+        {
+            return Collections.emptyMap();
+        }
+        Map<Long, String> summaries = new HashMap<>();
+        for (SeatStudentScore s : scores)
+        {
+            if (s.getStudentId() == null || StringUtils.isBlank(s.getSubjectScores()))
+            {
+                continue;
+            }
+            try
+            {
+                JSONObject obj = JSON.parseObject(s.getSubjectScores());
+                if (obj == null || obj.isEmpty())
+                {
+                    continue;
+                }
+                List<String> parts = new ArrayList<>();
+                for (String key : obj.keySet())
+                {
+                    parts.add(key + ":" + obj.getString(key));
+                }
+                summaries.put(s.getStudentId(), String.join(",", parts));
+            }
+            catch (Exception ignored)
+            {
+            }
+        }
+        return summaries;
+    }
+
+    private String paramString(SeatPlan plan, String key)
+    {
+        Object val = plan.getParams() == null ? null : plan.getParams().get(key);
+        return val == null ? null : val.toString();
+    }
+
+    private boolean paramBoolean(SeatPlan plan, String key, boolean defaultVal)
+    {
+        Object val = plan.getParams() == null ? null : plan.getParams().get(key);
+        if (val == null)
+        {
+            return defaultVal;
+        }
+        if (val instanceof Boolean boolVal)
+        {
+            return boolVal;
+        }
+        String str = val.toString().trim();
+        return "true".equalsIgnoreCase(str) || "1".equals(str);
+    }
+
+    private String truncateText(String text, int maxLen)
+    {
+        if (StringUtils.isBlank(text))
+        {
+            return null;
+        }
+        String trimmed = text.trim();
+        return trimmed.length() > maxLen ? trimmed.substring(0, maxLen) : trimmed;
     }
 
     private long resolveRandomSeed(SeatPlan seatPlan, int studentCount, int seatCount)
@@ -319,8 +568,10 @@ public class SeatPlanServiceImpl implements ISeatPlanService
         return Math.max(800, studentCount * 80);
     }
 
-    private void saveAssignments(SeatPlan plan, SeatingResult result, String operName)
+    private void saveAssignments(SeatPlan plan, SeatingResult result,
+            Map<Long, Long> lockedSeatByStudentId, String operName)
     {
+        String assignSource = "AI".equals(plan.getPlanType()) ? "AI" : "AUTO";
         for (SeatingAssignmentResult item : result.getAssignments())
         {
             SeatAssignment assignment = new SeatAssignment();
@@ -332,8 +583,8 @@ public class SeatPlanServiceImpl implements ISeatPlanService
             assignment.setStudentNameSnapshot(item.getStudent().getStudentName());
             assignment.setRowIndex(item.getSeat().getRowIndex());
             assignment.setColIndex(item.getSeat().getColIndex());
-            assignment.setIsLocked("0");
-            assignment.setAssignSource("AUTO");
+            assignment.setIsLocked(lockedSeatByStudentId.containsKey(item.getStudent().getStudentId()) ? "1" : "0");
+            assignment.setAssignSource(assignSource);
             assignment.setCreateBy(operName);
             assignment.setCreateTime(DateUtils.getNowDate());
             seatAssignmentMapper.insertSeatAssignment(assignment);

@@ -26,12 +26,13 @@ export function addPlan(data) {
   })
 }
 
-// 智能生成排座方案
+// 智能生成排座方案（兼容AI大模型较长推理时间）
 export function generatePlan(data) {
   return request({
     url: '/seating/plan/generate',
     method: 'post',
-    data: data
+    data: data,
+    timeout: 300000
   })
 }
 

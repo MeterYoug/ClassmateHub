@@ -16,6 +16,9 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="totalScore"    column="total_score"    />
         <result property="generatedAt"    column="generated_at"    />
         <result property="activeTime"    column="active_time"    />
+        <result property="aiConfigId"    column="ai_config_id"    />
+        <result property="aiPrompt"      column="ai_prompt"      />
+        <result property="aiReasoning"   column="ai_reasoning"   />
         <result property="delFlag"    column="del_flag"    />
         <result property="createBy"    column="create_by"    />
         <result property="createTime"    column="create_time"    />
@@ -27,7 +30,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <sql id="selectSeatPlanVo">
         select sp.plan_id, sp.class_id, sc.class_name, sp.classroom_id, cr.classroom_name,
                sp.plan_name, sp.plan_type, sp.plan_status, sp.total_score, sp.generated_at,
-               sp.active_time, sp.del_flag, sp.create_by, sp.create_time, sp.update_by,
+               sp.active_time, sp.ai_config_id, sp.ai_prompt, sp.ai_reasoning,
+               sp.del_flag, sp.create_by, sp.create_time, sp.update_by,
                sp.update_time, sp.remark
         from seat_plan sp
         left join seat_class sc on sc.class_id = sp.class_id
@@ -68,6 +72,9 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="totalScore != null">total_score,</if>
             <if test="generatedAt != null">generated_at,</if>
             <if test="activeTime != null">active_time,</if>
+            <if test="aiConfigId != null">ai_config_id,</if>
+            <if test="aiPrompt != null">ai_prompt,</if>
+            <if test="aiReasoning != null">ai_reasoning,</if>
             <if test="delFlag != null">del_flag,</if>
             <if test="createBy != null">create_by,</if>
             <if test="createTime != null">create_time,</if>
@@ -84,6 +91,9 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="totalScore != null">#{totalScore},</if>
             <if test="generatedAt != null">#{generatedAt},</if>
             <if test="activeTime != null">#{activeTime},</if>
+            <if test="aiConfigId != null">#{aiConfigId},</if>
+            <if test="aiPrompt != null">#{aiPrompt},</if>
+            <if test="aiReasoning != null">#{aiReasoning},</if>
             <if test="delFlag != null">#{delFlag},</if>
             <if test="createBy != null">#{createBy},</if>
             <if test="createTime != null">#{createTime},</if>
@@ -104,6 +114,9 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="totalScore != null">total_score = #{totalScore},</if>
             <if test="generatedAt != null">generated_at = #{generatedAt},</if>
             <if test="activeTime != null">active_time = #{activeTime},</if>
+            <if test="aiConfigId != null">ai_config_id = #{aiConfigId},</if>
+            <if test="aiPrompt != null">ai_prompt = #{aiPrompt},</if>
+            <if test="aiReasoning != null">ai_reasoning = #{aiReasoning},</if>
             <if test="delFlag != null">del_flag = #{delFlag},</if>
             <if test="createBy != null">create_by = #{createBy},</if>
             <if test="createTime != null">create_time = #{createTime},</if>

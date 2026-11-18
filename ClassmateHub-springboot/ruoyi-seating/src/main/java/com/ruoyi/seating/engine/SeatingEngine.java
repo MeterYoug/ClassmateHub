@@ -46,7 +46,7 @@ public class SeatingEngine
 
         Map<Long, Long> frontRowLimits = frontRowLimits(students, rules);
         List<SeatingAssignmentResult> assignments = greedyAssign(students, seats, relations, frontRowLimits,
-                activeRules, deskPairIndexes);
+                activeRules, deskPairIndexes, context.getLockedSeatByStudentId());
         assignments = optimize(assignments, seats, relations, frontRowLimits, activeRules, deskPairIndexes, context);
 
         List<String> conflicts = hardConflicts(assignments, relations, frontRowLimits, deskPairIndexes);
@@ -80,18 +80,48 @@ public class SeatingEngine
 
     private List<SeatingAssignmentResult> greedyAssign(List<SeatStudent> students, List<SeatPosition> seats,
             List<SeatStudentRelation> relations, Map<Long, Long> frontRowLimits, Map<String, SeatRule> activeRules,
-            Map<Long, Integer> deskPairIndexes)
+            Map<Long, Integer> deskPairIndexes, Map<Long, Long> lockedSeatByStudentId)
     {
         List<SeatingAssignmentResult> assignments = new ArrayList<>();
         Set<Long> usedSeatIds = new HashSet<>();
+        Set<Long> assignedStudentIds = new HashSet<>();
+        List<SeatPosition> usableSeats = seats.stream().filter(this::isUsableSeat).toList();
+        if (usableSeats.isEmpty())
+        {
+            usableSeats = seats;
+        }
+        Map<Long, SeatPosition> usableSeatMap = new HashMap<>();
+        for (SeatPosition seat : usableSeats)
+        {
+            usableSeatMap.put(seat.getSeatId(), seat);
+        }
+
+        if (lockedSeatByStudentId != null && !lockedSeatByStudentId.isEmpty())
+        {
+            for (SeatStudent student : students)
+            {
+                Long lockedSeatId = lockedSeatByStudentId.get(student.getStudentId());
+                SeatPosition lockedSeat = lockedSeatId == null ? null : usableSeatMap.get(lockedSeatId);
+                if (lockedSeat != null && usedSeatIds.add(lockedSeat.getSeatId()))
+                {
+                    assignments.add(new SeatingAssignmentResult(student, lockedSeat));
+                    assignedStudentIds.add(student.getStudentId());
+                }
+            }
+        }
+
         BigDecimal averageHeight = averageHeight(students);
-        long maxRow = seats.stream().mapToLong(SeatPosition::getRowIndex).max().orElse(1L);
+        long maxRow = usableSeats.stream().mapToLong(SeatPosition::getRowIndex).max().orElse(1L);
 
         for (SeatStudent student : students)
         {
+            if (assignedStudentIds.contains(student.getStudentId()))
+            {
+                continue;
+            }
             SeatPosition bestSeat = null;
             BigDecimal bestPenalty = null;
-            for (SeatPosition seat : seats)
+            for (SeatPosition seat : usableSeats)
             {
                 if (usedSeatIds.contains(seat.getSeatId()))
                 {
@@ -106,8 +136,11 @@ public class SeatingEngine
                     bestSeat = seat;
                 }
             }
-            usedSeatIds.add(bestSeat.getSeatId());
-            assignments.add(new SeatingAssignmentResult(student, bestSeat));
+            if (bestSeat != null)
+            {
+                usedSeatIds.add(bestSeat.getSeatId());
+                assignments.add(new SeatingAssignmentResult(student, bestSeat));
+            }
         }
         return assignments;
     }
@@ -153,6 +186,7 @@ public class SeatingEngine
                 ? assignments.stream().mapToLong(item -> item.getSeat().getRowIndex()).max().orElse(1L)
                 : seats.stream().mapToLong(SeatPosition::getRowIndex).max().orElse(1L);
 
+        Map<Long, Long> lockedMap = context.getLockedSeatByStudentId();
         Random random = new Random(context.getRandomSeed());
         List<SeatingAssignmentResult> best = copyAssignments(assignments);
         BigDecimal bestPenalty = totalPenalty(best, relations, frontRowLimits, activeRules, deskPairIndexes,
@@ -165,8 +199,16 @@ public class SeatingEngine
             {
                 continue;
             }
+            if (lockedMap.containsKey(best.get(left).getStudent().getStudentId()))
+            {
+                continue;
+            }
             if (right < best.size())
             {
+                if (lockedMap.containsKey(best.get(right).getStudent().getStudentId()))
+                {
+                    continue;
+                }
                 SeatPosition leftSeat = best.get(left).getSeat();
                 SeatPosition rightSeat = best.get(right).getSeat();
                 best.get(left).setSeat(rightSeat);
@@ -976,6 +1018,11 @@ public class SeatingEngine
     private List<SeatRule> safeRules(List<SeatRule> rules)
     {
         return rules == null ? new ArrayList<>() : rules;
+    }
+
+    public Map<Long, Integer> computeDeskPairIndexes(List<SeatPosition> seats)
+    {
+        return deskPairIndexes(seats);
     }
 
     private Map<Long, Integer> deskPairIndexes(List<SeatPosition> seats)
