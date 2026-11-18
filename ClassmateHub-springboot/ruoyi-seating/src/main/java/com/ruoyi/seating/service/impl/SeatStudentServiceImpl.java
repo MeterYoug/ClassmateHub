@@ -1,6 +1,9 @@
 package com.ruoyi.seating.service.impl;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import com.ruoyi.common.utils.DateUtils;
 import com.ruoyi.common.exception.ServiceException;
@@ -58,8 +61,9 @@ public class SeatStudentServiceImpl implements ISeatStudentService
         {
             throw new ServiceException("导入学生数据不能为空");
         }
-        int successNum = 0;
+        List<ImportRow> pending = new ArrayList<>();
         StringBuilder errors = new StringBuilder();
+        Map<String, Integer> firstRowByStudentNo = new LinkedHashMap<>();
         for (int i = 0; i < studentList.size(); i++)
         {
             SeatStudentImportData row = studentList.get(i);
@@ -68,23 +72,21 @@ public class SeatStudentServiceImpl implements ISeatStudentService
             {
                 validateImportRow(row);
                 SeatStudent student = buildStudent(classId, row, operName);
+                if (StringUtils.isNotBlank(student.getStudentNo()))
+                {
+                    Integer firstRow = firstRowByStudentNo.putIfAbsent(student.getStudentNo(), rowNumber);
+                    if (firstRow != null)
+                    {
+                        throw new ServiceException("学号 " + student.getStudentNo() + " 与第 " + firstRow + " 行重复");
+                    }
+                }
                 SeatStudent existing = StringUtils.isBlank(student.getStudentNo()) ? null
                         : seatStudentMapper.selectSeatStudentByClassIdAndStudentNo(student);
-                if (existing == null)
-                {
-                    insertSeatStudent(student);
-                }
-                else if (updateSupport)
-                {
-                    student.setStudentId(existing.getStudentId());
-                    student.setUpdateBy(operName);
-                    updateSeatStudent(student);
-                }
-                else
+                if (existing != null && !updateSupport)
                 {
                     throw new ServiceException("学号已存在");
                 }
-                successNum++;
+                pending.add(new ImportRow(student, existing));
             }
             catch (Exception e)
             {
@@ -95,7 +97,33 @@ public class SeatStudentServiceImpl implements ISeatStudentService
         {
             throw new ServiceException("导入失败，数据未写入：" + errors);
         }
-        return "导入成功，共 " + successNum + " 条";
+        for (ImportRow item : pending)
+        {
+            SeatStudent student = item.student;
+            if (item.existing == null)
+            {
+                insertSeatStudent(student);
+            }
+            else
+            {
+                student.setStudentId(item.existing.getStudentId());
+                student.setUpdateBy(operName);
+                updateSeatStudent(student);
+            }
+        }
+        return "导入成功，共 " + pending.size() + " 条";
+    }
+
+    private static final class ImportRow
+    {
+        private final SeatStudent student;
+        private final SeatStudent existing;
+
+        private ImportRow(SeatStudent student, SeatStudent existing)
+        {
+            this.student = student;
+            this.existing = existing;
+        }
     }
 
     private void validateImportRow(SeatStudentImportData row)

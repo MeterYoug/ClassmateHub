@@ -202,7 +202,8 @@ public class SeatStudentScoreServiceImpl implements ISeatStudentScoreService
             {
                 score.setScoreId(item.existing.getScoreId());
                 score.setUpdateBy(operName);
-                updateSeatStudentScore(score);
+                score.setUpdateTime(DateUtils.getNowDate());
+                seatStudentScoreMapper.updateSeatStudentScore(score);
             }
         }
         refreshRanksAndLevels(examId, operName);

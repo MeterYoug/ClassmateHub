@@ -1,4 +1,4 @@
-Application: 慧排座
+Application: ${ruoyi.name}
 Application Version: ${ruoyi.version}
 Spring Boot Version: ${spring-boot.version}
 ////////////////////////////////////////////////////////////////////

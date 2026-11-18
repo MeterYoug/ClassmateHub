@@ -308,8 +308,8 @@ function getList() {
 
 function getOptions() {
   return Promise.all([
-    listClass({ status: "0" }),
-    listClassroom({ status: "0" })
+    listClass({ status: "0", pageNum: 1, pageSize: 1000 }),
+    listClassroom({ status: "0", pageNum: 1, pageSize: 1000 })
   ]).then(([classResponse, classroomResponse]) => {
     classOptions.value = classResponse.rows
     classroomOptions.value = classroomResponse.rows

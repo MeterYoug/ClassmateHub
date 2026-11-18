@@ -163,6 +163,24 @@ public class SeatAssignmentServiceImpl implements ISeatAssignmentService
             currentAssignmentMap.put(currentAssignment.getAssignmentId(), currentAssignment);
         }
 
+        SeatPosition seatQuery = new SeatPosition();
+        seatQuery.setClassroomId(plan.getClassroomId());
+        List<SeatPosition> classroomSeats = seatPositionMapper.selectSeatPositionList(seatQuery);
+        Map<Long, SeatPosition> seatMap = new HashMap<>();
+        for (SeatPosition seat : classroomSeats)
+        {
+            seatMap.put(seat.getSeatId(), seat);
+        }
+
+        SeatStudent studentQuery = new SeatStudent();
+        studentQuery.setClassId(plan.getClassId());
+        List<SeatStudent> classStudents = seatStudentMapper.selectSeatStudentList(studentQuery);
+        Map<Long, SeatStudent> studentMap = new HashMap<>();
+        for (SeatStudent student : classStudents)
+        {
+            studentMap.put(student.getStudentId(), student);
+        }
+
         if (assignmentList == null)
         {
             assignmentList = new ArrayList<>();
@@ -173,7 +191,7 @@ public class SeatAssignmentServiceImpl implements ISeatAssignmentService
             {
                 throw new ServiceException("座位不能为空");
             }
-            SeatPosition seat = seatPositionMapper.selectSeatPositionBySeatId(submitItem.getSeatId());
+            SeatPosition seat = seatMap.get(submitItem.getSeatId());
             if (seat == null || !plan.getClassroomId().equals(seat.getClassroomId()))
             {
                 throw new ServiceException("座位不属于当前教室布局");
@@ -213,7 +231,7 @@ public class SeatAssignmentServiceImpl implements ISeatAssignmentService
                 {
                     throw new ServiceException("学生不能为空");
                 }
-                SeatStudent student = seatStudentMapper.selectSeatStudentByStudentId(submitItem.getStudentId());
+                SeatStudent student = studentMap.get(submitItem.getStudentId());
                 if (student == null || !plan.getClassId().equals(student.getClassId()))
                 {
                     throw new ServiceException("学生不属于当前班级");
@@ -281,33 +299,17 @@ public class SeatAssignmentServiceImpl implements ISeatAssignmentService
         {
             updated += seatAssignmentMapper.insertSeatAssignment(insertItem);
         }
-        SeatAssignmentAdjustResult result = refreshPlanScore(plan, operName);
+        SeatAssignmentAdjustResult result = refreshPlanScore(plan, classroomSeats, seatMap, studentMap, operName);
         result.setUpdated(updated);
         return result;
     }
 
-    private SeatAssignmentAdjustResult refreshPlanScore(SeatPlan plan, String operName)
+    private SeatAssignmentAdjustResult refreshPlanScore(SeatPlan plan, List<SeatPosition> seats,
+            Map<Long, SeatPosition> seatMap, Map<Long, SeatStudent> studentMap, String operName)
     {
         SeatAssignment assignmentQuery = new SeatAssignment();
         assignmentQuery.setPlanId(plan.getPlanId());
         List<SeatAssignment> assignments = seatAssignmentMapper.selectSeatAssignmentList(assignmentQuery);
-
-        SeatStudent studentQuery = new SeatStudent();
-        studentQuery.setClassId(plan.getClassId());
-        Map<Long, SeatStudent> studentMap = new HashMap<>();
-        for (SeatStudent student : seatStudentMapper.selectSeatStudentList(studentQuery))
-        {
-            studentMap.put(student.getStudentId(), student);
-        }
-
-        SeatPosition seatQuery = new SeatPosition();
-        seatQuery.setClassroomId(plan.getClassroomId());
-        Map<Long, SeatPosition> seatMap = new HashMap<>();
-        List<SeatPosition> seats = seatPositionMapper.selectSeatPositionList(seatQuery);
-        for (SeatPosition seat : seats)
-        {
-            seatMap.put(seat.getSeatId(), seat);
-        }
 
         List<SeatingAssignmentResult> evaluateAssignments = new ArrayList<>();
         for (SeatAssignment assignment : assignments)

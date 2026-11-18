@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.ruoyi.seating.domain.SeatClass;
 import com.ruoyi.seating.domain.SeatClassroom;
+import com.ruoyi.seating.domain.SeatPlan;
 import com.ruoyi.seating.domain.SeatPosition;
 import com.ruoyi.seating.domain.SeatRule;
 import com.ruoyi.seating.domain.SeatStudent;
@@ -19,6 +20,7 @@ import com.ruoyi.seating.domain.SeatStudentRelation;
 import com.ruoyi.seating.domain.request.SeatClassCopyRequest;
 import com.ruoyi.seating.mapper.SeatClassMapper;
 import com.ruoyi.seating.mapper.SeatClassroomMapper;
+import com.ruoyi.seating.mapper.SeatPlanMapper;
 import com.ruoyi.seating.mapper.SeatPositionMapper;
 import com.ruoyi.seating.mapper.SeatRuleMapper;
 import com.ruoyi.seating.mapper.SeatStudentMapper;
@@ -53,6 +55,9 @@ public class SeatClassServiceImpl implements ISeatClassService
 
     @Autowired
     private SeatPositionMapper seatPositionMapper;
+
+    @Autowired
+    private SeatPlanMapper seatPlanMapper;
 
     /**
      * 查询排座班级
@@ -117,6 +122,13 @@ public class SeatClassServiceImpl implements ISeatClassService
     @Override
     public int deleteSeatClassByClassIds(Long[] classIds)
     {
+        if (classIds != null)
+        {
+            for (Long classId : classIds)
+            {
+                checkClassDeletable(classId);
+            }
+        }
         return seatClassMapper.deleteSeatClassByClassIds(classIds);
     }
 
@@ -129,7 +141,34 @@ public class SeatClassServiceImpl implements ISeatClassService
     @Override
     public int deleteSeatClassByClassId(Long classId)
     {
+        checkClassDeletable(classId);
         return seatClassMapper.deleteSeatClassByClassId(classId);
+    }
+
+    private void checkClassDeletable(Long classId)
+    {
+        if (classId == null)
+        {
+            return;
+        }
+        SeatStudent studentQuery = new SeatStudent();
+        studentQuery.setClassId(classId);
+        if (!seatStudentMapper.selectSeatStudentList(studentQuery).isEmpty())
+        {
+            throw new ServiceException("该班级下仍有关联学生，请先删除或转移学生");
+        }
+        SeatClassroom classroomQuery = new SeatClassroom();
+        classroomQuery.setClassId(classId);
+        if (!seatClassroomMapper.selectSeatClassroomList(classroomQuery).isEmpty())
+        {
+            throw new ServiceException("该班级下仍有关联教室布局，请先删除教室布局");
+        }
+        SeatPlan planQuery = new SeatPlan();
+        planQuery.setClassId(classId);
+        if (!seatPlanMapper.selectSeatPlanList(planQuery).isEmpty())
+        {
+            throw new ServiceException("该班级下仍有关联座位方案，请先删除座位方案");
+        }
     }
 
     @Override
@@ -176,7 +215,7 @@ public class SeatClassServiceImpl implements ISeatClassService
 
         if (copyRules)
         {
-            copyRulesIfNeeded(sourceClass, copiedClass, operName);
+            copyRulesIfNeeded(sourceClass, copiedClass, studentIdMap, operName);
         }
 
         return copiedClass;
@@ -356,7 +395,7 @@ public class SeatClassServiceImpl implements ISeatClassService
         }
     }
 
-    private void copyRulesIfNeeded(SeatClass sourceClass, SeatClass copiedClass, String operName)
+    private void copyRulesIfNeeded(SeatClass sourceClass, SeatClass copiedClass, Map<Long, Long> studentIdMap, String operName)
     {
         SeatRule query = new SeatRule();
         query.setClassId(sourceClass.getClassId());
@@ -370,7 +409,7 @@ public class SeatClassServiceImpl implements ISeatClassService
             copiedRule.setRuleCategory(rule.getRuleCategory());
             copiedRule.setRuleCode(rule.getRuleCode());
             copiedRule.setRuleWeight(rule.getRuleWeight());
-            copiedRule.setRuleConfig(rule.getRuleConfig());
+            copiedRule.setRuleConfig(SeatClassCopySupport.remapRuleConfigStudentIds(rule.getRuleConfig(), studentIdMap));
             copiedRule.setEnabled(rule.getEnabled());
             copiedRule.setStatus(rule.getStatus());
             copiedRule.setDelFlag("0");

@@ -164,10 +164,18 @@
               </el-select>
             </el-form-item>
           </el-col>
-          <template v-if="form.ruleCode === 'FRONT_ROW'">
+          <template v-if="isStudentSelectionRule(form.ruleCode)">
             <el-col :span="24">
               <el-form-item label="指定学生" prop="studentIds">
-                <el-select v-model="form.studentIds" placeholder="请选择学生" multiple filterable clearable style="width: 100%">
+                <el-select
+                  v-model="form.studentIds"
+                  :disabled="!form.classId"
+                  :placeholder="form.classId ? '请选择学生' : '请先选择班级'"
+                  multiple
+                  filterable
+                  clearable
+                  style="width: 100%"
+                >
                   <el-option
                     v-for="item in studentOptions"
                     :key="item.studentId"
@@ -177,7 +185,7 @@
                 </el-select>
               </el-form-item>
             </el-col>
-            <el-col :span="24">
+            <el-col v-if="form.ruleCode === 'FRONT_ROW'" :span="24">
               <el-form-item label="前几排" prop="frontRows">
                 <el-input-number v-model="form.frontRows" :min="1" :max="10" controls-position="right" style="width: 100%" />
               </el-form-item>
@@ -234,12 +242,20 @@ const categoryOptions = [
 ]
 const ruleOptions = [
   { value: "FRONT_ROW", label: "指定学生坐前排", category: "HARD", defaultWeight: 100 },
+  { value: "NOT_DESKMATE", label: "指定学生不能同桌", category: "HARD", defaultWeight: 100 },
+  { value: "NOT_ADJACENT", label: "指定学生不能相邻", category: "HARD", defaultWeight: 100 },
+  { value: "PREFER_DESKMATE", label: "指定学生优先同桌", category: "SOFT", defaultWeight: 80 },
   { value: "VISION_FRONT", label: "近视学生靠前", category: "SOFT", defaultWeight: 80 },
   { value: "HEIGHT_BACK", label: "高个学生靠后", category: "SOFT", defaultWeight: 60 },
   { value: "GENDER_BALANCE", label: "男女搭配均衡", category: "SOFT", defaultWeight: 40 },
   { value: "SCORE_BALANCE", label: "成绩强弱均衡", category: "SOFT", defaultWeight: 40 },
   { value: "DISCIPLINE_SCATTER", label: "纪律关注学生分散", category: "SOFT", defaultWeight: 70 }
 ]
+const STUDENT_RELATION_CODES = ["NOT_DESKMATE", "NOT_ADJACENT", "PREFER_DESKMATE"]
+
+function isStudentSelectionRule(ruleCode) {
+  return ruleCode === "FRONT_ROW" || STUDENT_RELATION_CODES.includes(ruleCode)
+}
 
 const ruleList = ref([])
 const classOptions = ref([])
@@ -318,7 +334,7 @@ function getList() {
 }
 
 function getClassOptions() {
-  return listClass({ status: "0" }).then(response => {
+  return listClass({ status: "0", pageNum: 1, pageSize: 1000 }).then(response => {
     classOptions.value = response.rows
   })
 }
@@ -365,12 +381,14 @@ function handleRuleCodeChange(ruleCode) {
   }
   form.value.ruleName = option.label
   form.value.ruleWeight = option.defaultWeight
-  if (ruleCode !== "FRONT_ROW") {
+  if (!isStudentSelectionRule(ruleCode)) {
     form.value.studentIds = []
     form.value.frontRows = null
     form.value.ruleConfig = null
-  } else {
+  } else if (ruleCode === "FRONT_ROW") {
     form.value.frontRows = form.value.frontRows || 2
+  } else {
+    form.value.frontRows = null
   }
 }
 
@@ -392,22 +410,30 @@ function applyRuleConfig(rule) {
 }
 
 function buildRuleConfig() {
-  if (form.value.ruleCode !== "FRONT_ROW") {
-    return null
+  if (form.value.ruleCode === "FRONT_ROW") {
+    return JSON.stringify({
+      studentIds: form.value.studentIds || [],
+      frontRows: form.value.frontRows || 2
+    })
   }
-  return JSON.stringify({
-    studentIds: form.value.studentIds || [],
-    frontRows: form.value.frontRows || 2
-  })
+  if (STUDENT_RELATION_CODES.includes(form.value.ruleCode)) {
+    return JSON.stringify({
+      studentIds: form.value.studentIds || []
+    })
+  }
+  return null
 }
 
 function formatRuleConfig(row) {
-  if (row.ruleCode !== "FRONT_ROW") {
+  if (!isStudentSelectionRule(row.ruleCode)) {
     return "-"
   }
   const config = parseRuleConfig(row.ruleConfig)
   const count = Array.isArray(config.studentIds) ? config.studentIds.length : 0
-  return `前${config.frontRows || 2}排，${count}名学生`
+  if (row.ruleCode === "FRONT_ROW") {
+    return `前${config.frontRows || 2}排，${count}名学生`
+  }
+  return `涉及 ${count} 名学生`
 }
 
 /** 取消按钮 */
@@ -457,6 +483,12 @@ function handleSelectionChange(selection) {
 /** 新增按钮操作 */
 function handleAdd() {
   reset()
+  if (queryParams.value.classId) {
+    form.value.classId = queryParams.value.classId
+    getStudentOptions(form.value.classId)
+  } else {
+    studentOptions.value = []
+  }
   open.value = true
   title.value = "添加排座规则"
 }
@@ -482,6 +514,10 @@ function submitForm() {
       const submitData = { ...form.value }
       if (submitData.ruleCode === "FRONT_ROW" && (!submitData.studentIds || submitData.studentIds.length === 0)) {
         proxy.$modal.msgError("请选择需要坐前排的学生")
+        return
+      }
+      if (STUDENT_RELATION_CODES.includes(submitData.ruleCode) && (!submitData.studentIds || submitData.studentIds.length < 2)) {
+        proxy.$modal.msgError("请至少选择 2 名学生")
         return
       }
       submitData.ruleConfig = buildRuleConfig()

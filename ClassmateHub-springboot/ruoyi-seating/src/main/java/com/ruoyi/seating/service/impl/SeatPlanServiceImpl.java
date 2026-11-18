@@ -2,6 +2,7 @@ package com.ruoyi.seating.service.impl;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.common.utils.DateUtils;
 import com.ruoyi.common.utils.StringUtils;
@@ -287,18 +288,18 @@ public class SeatPlanServiceImpl implements ISeatPlanService
     private long resolveRandomSeed(SeatPlan seatPlan, int studentCount, int seatCount)
     {
         Object seedParam = seatPlan.getParams() == null ? null : seatPlan.getParams().get("seed");
-        if (seedParam != null)
+        if (seedParam != null && StringUtils.isNotBlank(seedParam.toString()))
         {
             try
             {
-                return Long.parseLong(seedParam.toString());
+                return Long.parseLong(seedParam.toString().trim());
             }
             catch (NumberFormatException e)
             {
                 throw new ServiceException("随机种子必须是数字");
             }
         }
-        return Objects.hash(seatPlan.getClassId(), seatPlan.getClassroomId(), studentCount, seatCount);
+        return ThreadLocalRandom.current().nextLong(1, 1_000_000_000L);
     }
 
     private int resolveOptimizeIterations(SeatPlan seatPlan, int studentCount)

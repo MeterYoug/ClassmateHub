@@ -125,11 +125,11 @@
           </div>
         </div>
         <div class="seat-grid" :style="gridStyle">
-          <div
+            <div
             v-for="seat in displayFlatSeats"
             :key="seat.rowIndex + '-' + seat.colIndex"
             class="seat-cell"
-            :class="[seatClass(seat), genderSeatClass(seat), { 'seat-selected': isSeatSelected(seat) }]"
+            :class="[seatClass(seat), genderSeatClass(seat), { 'seat-selected': isSeatSelected(seat), 'seat-conflict': isSeatInConflict(seat) }]"
             :draggable="canDrag(seat)"
             @click="toggleSeatSelection(seat)"
             @dragstart="handleDragStart(seat)"
@@ -166,7 +166,7 @@
               </div>
             </template>
             <template v-else>
-              <div class="seat-placeholder">{{ seat.seatType === "2" ? "空座" : "不可用" }}</div>
+              <div class="seat-placeholder">{{ seat.seatType === "2" ? "过道" : "不可用" }}</div>
             </template>
           </div>
         </div>
@@ -315,6 +315,20 @@ const studentMap = computed(() => {
 })
 
 const assignedStudentIds = computed(() => new Set(assignmentList.value.map(item => item.studentId)))
+const conflictSeatIds = computed(() => {
+  const conflicts = adjustResult.value?.conflicts || []
+  if (!conflicts.length) {
+    return new Set()
+  }
+  const matched = new Set()
+  assignmentList.value.forEach(item => {
+    const name = item.studentNameSnapshot
+    if (name && conflicts.some(text => String(text).includes(name))) {
+      matched.add(item.seatId)
+    }
+  })
+  return matched
+})
 const unassignedStudents = computed(() => studentList.value.filter(item => item.status === "0" && !assignedStudentIds.value.has(item.studentId)))
 const filteredUnassignedStudents = computed(() => {
   const keyword = unassignedKeyword.value.trim().toLowerCase()
@@ -464,6 +478,10 @@ function canDrag(seat) {
 
 function isSeatSelected(seat) {
   return selectedSeatIds.value.includes(seat.seatId)
+}
+
+function isSeatInConflict(seat) {
+  return conflictSeatIds.value.has(seat.seatId)
 }
 
 function guardPlanAction(action) {
@@ -1086,6 +1104,34 @@ function loadDetail() {
   })
 }
 
+function handleBeforeUnload(event) {
+  if (!dirty.value) {
+    return
+  }
+  event.preventDefault()
+  event.returnValue = ""
+}
+
+onMounted(() => {
+  window.addEventListener("beforeunload", handleBeforeUnload)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener("beforeunload", handleBeforeUnload)
+})
+
+onBeforeRouteLeave((to, from, next) => {
+  if (!dirty.value) {
+    next()
+    return
+  }
+  proxy.$modal.confirm("当前座位调整尚未保存，离开后修改将丢失，是否确认离开？").then(() => {
+    next()
+  }).catch(() => {
+    next(false)
+  })
+})
+
 loadDetail()
 </script>
 
@@ -1315,6 +1361,11 @@ loadDetail()
 
 .seat-selected {
   box-shadow: 0 0 0 2px #409eff;
+}
+
+.seat-conflict {
+  border-color: var(--seating-danger) !important;
+  box-shadow: 0 0 0 2px rgba(217, 83, 79, 0.25);
 }
 
 .seat-locked {

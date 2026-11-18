@@ -1,11 +1,14 @@
 package com.ruoyi.seating.service.impl;
 
 import java.util.List;
+import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.common.utils.DateUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.ruoyi.seating.mapper.SeatClassroomMapper;
+import com.ruoyi.seating.mapper.SeatPlanMapper;
 import com.ruoyi.seating.domain.SeatClassroom;
+import com.ruoyi.seating.domain.SeatPlan;
 import com.ruoyi.seating.service.ISeatClassroomService;
 
 /**
@@ -19,6 +22,9 @@ public class SeatClassroomServiceImpl implements ISeatClassroomService
 {
     @Autowired
     private SeatClassroomMapper seatClassroomMapper;
+
+    @Autowired
+    private SeatPlanMapper seatPlanMapper;
 
     /**
      * 查询排座教室布局
@@ -79,6 +85,13 @@ public class SeatClassroomServiceImpl implements ISeatClassroomService
     @Override
     public int deleteSeatClassroomByClassroomIds(Long[] classroomIds)
     {
+        if (classroomIds != null)
+        {
+            for (Long classroomId : classroomIds)
+            {
+                checkClassroomDeletable(classroomId);
+            }
+        }
         return seatClassroomMapper.deleteSeatClassroomByClassroomIds(classroomIds);
     }
 
@@ -91,6 +104,21 @@ public class SeatClassroomServiceImpl implements ISeatClassroomService
     @Override
     public int deleteSeatClassroomByClassroomId(Long classroomId)
     {
+        checkClassroomDeletable(classroomId);
         return seatClassroomMapper.deleteSeatClassroomByClassroomId(classroomId);
+    }
+
+    private void checkClassroomDeletable(Long classroomId)
+    {
+        if (classroomId == null)
+        {
+            return;
+        }
+        SeatPlan planQuery = new SeatPlan();
+        planQuery.setClassroomId(classroomId);
+        if (!seatPlanMapper.selectSeatPlanList(planQuery).isEmpty())
+        {
+            throw new ServiceException("该教室布局已被座位方案使用，请先删除关联的座位方案");
+        }
     }
 }

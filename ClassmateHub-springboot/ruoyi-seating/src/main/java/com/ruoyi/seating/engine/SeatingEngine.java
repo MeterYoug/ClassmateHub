@@ -38,7 +38,7 @@ public class SeatingEngine
         List<SeatStudent> students = new ArrayList<>(context.getStudents());
         List<SeatPosition> seats = new ArrayList<>(context.getSeats());
         List<SeatRule> rules = safeRules(context.getRules());
-        List<SeatStudentRelation> relations = safeRelations(context.getRelations());
+        List<SeatStudentRelation> relations = mergeRuleRelations(safeRelations(context.getRelations()), rules);
         Map<String, SeatRule> activeRules = activeRuleMap(rules);
         students.sort(studentComparator());
         seats.sort(seatComparator());
@@ -47,7 +47,7 @@ public class SeatingEngine
         Map<Long, Long> frontRowLimits = frontRowLimits(students, rules);
         List<SeatingAssignmentResult> assignments = greedyAssign(students, seats, relations, frontRowLimits,
                 activeRules, deskPairIndexes);
-        assignments = optimize(assignments, relations, frontRowLimits, activeRules, deskPairIndexes, context);
+        assignments = optimize(assignments, seats, relations, frontRowLimits, activeRules, deskPairIndexes, context);
 
         List<String> conflicts = hardConflicts(assignments, relations, frontRowLimits, deskPairIndexes);
         List<SeatingScoreItem> scoreItems = score(assignments, relations, frontRowLimits, activeRules, deskPairIndexes);
@@ -66,7 +66,7 @@ public class SeatingEngine
             List<SeatRule> rules, List<SeatStudentRelation> relations, long randomSeed)
     {
         List<SeatRule> safeRules = safeRules(rules);
-        List<SeatStudentRelation> safeRelations = safeRelations(relations);
+        List<SeatStudentRelation> safeRelations = mergeRuleRelations(safeRelations(relations), safeRules);
         Map<String, SeatRule> activeRules = activeRuleMap(safeRules);
         Map<Long, Integer> deskPairIndexes = deskPairIndexes(seats);
         Map<Long, Long> frontRowLimits = frontRowLimits(
@@ -113,36 +113,94 @@ public class SeatingEngine
     }
 
     private List<SeatingAssignmentResult> optimize(List<SeatingAssignmentResult> assignments,
-            List<SeatStudentRelation> relations, Map<Long, Long> frontRowLimits, Map<String, SeatRule> activeRules,
-            Map<Long, Integer> deskPairIndexes, SeatingContext context)
+            List<SeatPosition> seats, List<SeatStudentRelation> relations, Map<Long, Long> frontRowLimits,
+            Map<String, SeatRule> activeRules, Map<Long, Integer> deskPairIndexes, SeatingContext context)
     {
         int iterations = context.getOptimizeIterations() > 0 ? context.getOptimizeIterations() : DEFAULT_ITERATIONS;
-        if (assignments.size() < 2 || iterations <= 0)
+        if (assignments.isEmpty() || iterations <= 0)
         {
             return assignments;
         }
 
+        Set<Long> assignedSeatIds = new HashSet<>();
+        for (SeatingAssignmentResult item : assignments)
+        {
+            if (item.getSeat() != null && item.getSeat().getSeatId() != null)
+            {
+                assignedSeatIds.add(item.getSeat().getSeatId());
+            }
+        }
+        List<SeatPosition> unassignedSeats = new ArrayList<>();
+        if (seats != null)
+        {
+            for (SeatPosition seat : seats)
+            {
+                if (seat != null && seat.getSeatId() != null && isUsableSeat(seat)
+                        && !assignedSeatIds.contains(seat.getSeatId()))
+                {
+                    unassignedSeats.add(seat);
+                }
+            }
+        }
+        int totalPositions = assignments.size() + unassignedSeats.size();
+        if (totalPositions < 2)
+        {
+            return assignments;
+        }
+
+        BigDecimal averageHeight = averageHeight(assignments.stream().map(SeatingAssignmentResult::getStudent).toList());
+        long maxRow = seats == null || seats.isEmpty()
+                ? assignments.stream().mapToLong(item -> item.getSeat().getRowIndex()).max().orElse(1L)
+                : seats.stream().mapToLong(SeatPosition::getRowIndex).max().orElse(1L);
+
         Random random = new Random(context.getRandomSeed());
         List<SeatingAssignmentResult> best = copyAssignments(assignments);
-        BigDecimal bestPenalty = totalPenalty(best, relations, frontRowLimits, activeRules, deskPairIndexes);
+        BigDecimal bestPenalty = totalPenalty(best, relations, frontRowLimits, activeRules, deskPairIndexes,
+                averageHeight, maxRow);
         for (int i = 0; i < iterations; i++)
         {
             int left = random.nextInt(best.size());
-            int right = random.nextInt(best.size());
+            int right = random.nextInt(totalPositions);
             if (left == right)
             {
                 continue;
             }
-            List<SeatingAssignmentResult> candidate = copyAssignments(best);
-            SeatPosition leftSeat = candidate.get(left).getSeat();
-            candidate.get(left).setSeat(candidate.get(right).getSeat());
-            candidate.get(right).setSeat(leftSeat);
-            BigDecimal candidatePenalty = totalPenalty(candidate, relations, frontRowLimits, activeRules,
-                    deskPairIndexes);
-            if (candidatePenalty.compareTo(bestPenalty) < 0)
+            if (right < best.size())
             {
-                best = candidate;
-                bestPenalty = candidatePenalty;
+                SeatPosition leftSeat = best.get(left).getSeat();
+                SeatPosition rightSeat = best.get(right).getSeat();
+                best.get(left).setSeat(rightSeat);
+                best.get(right).setSeat(leftSeat);
+                BigDecimal candidatePenalty = totalPenalty(best, relations, frontRowLimits, activeRules,
+                        deskPairIndexes, averageHeight, maxRow);
+                if (candidatePenalty.compareTo(bestPenalty) < 0)
+                {
+                    bestPenalty = candidatePenalty;
+                }
+                else
+                {
+                    best.get(left).setSeat(leftSeat);
+                    best.get(right).setSeat(rightSeat);
+                }
+            }
+            else
+            {
+                int emptyIdx = right - best.size();
+                SeatPosition oldSeat = best.get(left).getSeat();
+                SeatPosition emptySeat = unassignedSeats.get(emptyIdx);
+                best.get(left).setSeat(emptySeat);
+                unassignedSeats.set(emptyIdx, oldSeat);
+                BigDecimal candidatePenalty = totalPenalty(best, relations, frontRowLimits, activeRules,
+                        deskPairIndexes, averageHeight, maxRow);
+                if (candidatePenalty.compareTo(bestPenalty) < 0)
+                {
+                    bestPenalty = candidatePenalty;
+                }
+                else
+                {
+                    best.get(left).setSeat(oldSeat);
+                    unassignedSeats.set(emptyIdx, emptySeat);
+                }
             }
         }
         return best;
@@ -243,17 +301,41 @@ public class SeatingEngine
     }
 
     private BigDecimal totalPenalty(List<SeatingAssignmentResult> assignments, List<SeatStudentRelation> relations,
-            Map<Long, Long> frontRowLimits, Map<String, SeatRule> activeRules, Map<Long, Integer> deskPairIndexes)
+            Map<Long, Long> frontRowLimits, Map<String, SeatRule> activeRules, Map<Long, Integer> deskPairIndexes,
+            BigDecimal averageHeight, long maxRow)
     {
         BigDecimal penalty = BigDecimal.ZERO;
-        BigDecimal averageHeight = averageHeight(assignments.stream().map(SeatingAssignmentResult::getStudent).toList());
-        long maxRow = assignments.stream().mapToLong(item -> item.getSeat().getRowIndex()).max().orElse(1L);
-        for (SeatingAssignmentResult assignment : assignments)
+        boolean checkDiscipline = activeRules.containsKey("DISCIPLINE_SCATTER");
+        for (int i = 0; i < assignments.size(); i++)
         {
-            penalty = penalty.add(softPlacementPenalty(assignment.getStudent(), assignment.getSeat(),
-                    assignmentsBefore(assignments, assignment), activeRules, averageHeight, maxRow));
-            Long frontRowLimit = frontRowLimits.get(assignment.getStudent().getStudentId());
-            if (frontRowLimit != null && assignment.getSeat().getRowIndex() > frontRowLimit)
+            SeatingAssignmentResult assignment = assignments.get(i);
+            SeatStudent student = assignment.getStudent();
+            SeatPosition seat = assignment.getSeat();
+            penalty = penalty.add(singleStudentSoftPenalty(student, seat, activeRules, averageHeight, maxRow));
+            if (checkDiscipline)
+            {
+                int disciplineLevel = intValue(student.getDisciplineLevel());
+                if (disciplineLevel > 0)
+                {
+                    long adjacentDisciplineCount = 0L;
+                    for (int j = 0; j < i; j++)
+                    {
+                        SeatingAssignmentResult prev = assignments.get(j);
+                        if (intValue(prev.getStudent().getDisciplineLevel()) > 0
+                                && adjacent(prev.getSeat(), seat))
+                        {
+                            adjacentDisciplineCount++;
+                        }
+                    }
+                    if (adjacentDisciplineCount > 0)
+                    {
+                        penalty = penalty.add(weightedPenalty(adjacentDisciplineCount * disciplineLevel * 20L,
+                                activeRules, "DISCIPLINE_SCATTER"));
+                    }
+                }
+            }
+            Long frontRowLimit = frontRowLimits.get(student.getStudentId());
+            if (frontRowLimit != null && seat.getRowIndex() > frontRowLimit)
             {
                 penalty = penalty.add(HARD_PENALTY);
             }
@@ -290,6 +372,31 @@ public class SeatingEngine
         {
             penalty = penalty.add(weightedPenalty(sameScorePairs(assignments, deskPairIndexes) * 5L,
                     activeRules, "SCORE_BALANCE"));
+        }
+        return penalty;
+    }
+
+    private BigDecimal singleStudentSoftPenalty(SeatStudent student, SeatPosition seat,
+            Map<String, SeatRule> activeRules, BigDecimal averageHeight, long maxRow)
+    {
+        BigDecimal penalty = BigDecimal.ZERO;
+        int visionLevel = intValue(student.getVisionLevel());
+        if (visionLevel > 0 && activeRules.containsKey("VISION_FRONT"))
+        {
+            penalty = penalty.add(weightedPenalty((seat.getRowIndex() - 1) * visionLevel * 4L, activeRules, "VISION_FRONT"));
+        }
+        if (student.getHeightCm() != null && averageHeight.compareTo(BigDecimal.ZERO) > 0
+                && activeRules.containsKey("HEIGHT_BACK"))
+        {
+            BigDecimal heightDiff = student.getHeightCm().subtract(averageHeight);
+            if (heightDiff.compareTo(BigDecimal.valueOf(5)) >= 0)
+            {
+                penalty = penalty.add(weightedPenalty((maxRow - seat.getRowIndex()) * 2L, activeRules, "HEIGHT_BACK"));
+            }
+            else if (heightDiff.compareTo(BigDecimal.valueOf(-5)) <= 0)
+            {
+                penalty = penalty.add(weightedPenalty(seat.getRowIndex() - 1, activeRules, "HEIGHT_BACK"));
+            }
         }
         return penalty;
     }
@@ -592,6 +699,10 @@ public class SeatingEngine
         }
         for (SeatRule rule : rules)
         {
+            if (!isRuleActive(rule))
+            {
+                continue;
+            }
             if (!"FRONT_ROW".equals(rule.getRuleCode()) && !"MUST_FRONT_ROW".equals(rule.getRuleCode())
                     && !"STUDENT_FRONT_ROW".equals(rule.getRuleCode()))
             {
@@ -610,7 +721,7 @@ public class SeatingEngine
                 Long studentId = config.getLong("studentId");
                 if (studentId != null)
                 {
-                    limits.put(studentId, frontRows);
+                    limits.merge(studentId, frontRows, Math::min);
                 }
                 continue;
             }
@@ -619,11 +730,90 @@ public class SeatingEngine
                 Long studentId = studentIds.getLong(i);
                 if (studentId != null)
                 {
-                    limits.put(studentId, frontRows);
+                    limits.merge(studentId, frontRows, Math::min);
                 }
             }
         }
         return limits;
+    }
+
+    private List<SeatStudentRelation> mergeRuleRelations(List<SeatStudentRelation> relations, List<SeatRule> rules)
+    {
+        List<SeatStudentRelation> merged = new ArrayList<>(relations);
+        for (SeatRule rule : rules)
+        {
+            if (!isRuleActive(rule))
+            {
+                continue;
+            }
+            String ruleCode = rule.getRuleCode();
+            if (!"NOT_DESKMATE".equals(ruleCode) && !"NOT_ADJACENT".equals(ruleCode)
+                    && !"PREFER_DESKMATE".equals(ruleCode))
+            {
+                continue;
+            }
+            JSONObject config = parseConfig(rule.getRuleConfig());
+            if (config == null)
+            {
+                continue;
+            }
+            JSONArray studentIds = config.getJSONArray("studentIds");
+            if (studentIds == null || studentIds.size() < 2)
+            {
+                continue;
+            }
+            long weight = rule.getRuleWeight() == null ? 100L : Math.max(0L, rule.getRuleWeight());
+            for (int i = 0; i < studentIds.size(); i++)
+            {
+                Long leftId = studentIds.getLong(i);
+                if (leftId == null)
+                {
+                    continue;
+                }
+                for (int j = i + 1; j < studentIds.size(); j++)
+                {
+                    Long rightId = studentIds.getLong(j);
+                    if (rightId == null || leftId.equals(rightId))
+                    {
+                        continue;
+                    }
+                    if (!hasRelation(merged, leftId, rightId, ruleCode))
+                    {
+                        SeatStudentRelation synthetic = new SeatStudentRelation();
+                        synthetic.setStudentId(leftId);
+                        synthetic.setRelatedId(rightId);
+                        synthetic.setRelationType(ruleCode);
+                        synthetic.setRelationWeight(weight);
+                        synthetic.setEnabled("1");
+                        merged.add(synthetic);
+                    }
+                }
+            }
+        }
+        return merged;
+    }
+
+    private boolean hasRelation(List<SeatStudentRelation> relations, Long leftId, Long rightId, String relationType)
+    {
+        for (SeatStudentRelation relation : relations)
+        {
+            if (relationType.equals(relation.getRelationType()) && samePair(relation, leftId, rightId))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isRuleActive(SeatRule rule)
+    {
+        if (rule == null)
+        {
+            return false;
+        }
+        String enabled = rule.getEnabled() == null ? "1" : rule.getEnabled();
+        String status = rule.getStatus() == null ? "0" : rule.getStatus();
+        return "1".equals(enabled) && "0".equals(status);
     }
 
     private JSONObject parseConfig(String ruleConfig)

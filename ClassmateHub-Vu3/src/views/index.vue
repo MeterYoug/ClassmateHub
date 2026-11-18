@@ -7,7 +7,7 @@
         <p class="overview-text">
           先确认当前班级的数据准备情况，再生成、调整并导出座位方案。
         </p>
-        <div class="task-hint">当前状态：完成数据准备后即可开始排座</div>
+        <div class="task-hint">{{ statusHintText }}</div>
       </div>
       <div class="overview-actions">
         <el-button type="primary" :icon="Grid" @click="goPage('/seating/plan')">开始一次排座</el-button>
@@ -40,16 +40,18 @@
           <template #header>
             <div class="panel-header">
               <span>排座流程</span>
-              <el-tag type="warning" effect="plain">待确认数据</el-tag>
+              <el-tag :type="isReady ? 'success' : 'warning'" effect="plain">
+                {{ isReady ? "已就绪" : "待确认数据" }}
+              </el-tag>
             </div>
           </template>
-          <el-steps :active="0" finish-status="success" align-center>
-            <el-step title="班级" description="学段、年级、科目" />
-            <el-step title="学生" description="导入基础信息" />
-            <el-step title="成绩" description="导入并同步等级" />
-            <el-step title="教室" description="维护座位和过道" />
-            <el-step title="规则" description="配置权重" />
-            <el-step title="方案" description="生成、微调、导出" />
+          <el-steps :active="activeStep" finish-status="success" align-center>
+            <el-step title="班级" description="学段、年级、科目" :status="stepStatuses[0]" />
+            <el-step title="学生" description="导入基础信息" :status="stepStatuses[1]" />
+            <el-step title="成绩" description="导入并同步等级" :status="stepStatuses[2]" />
+            <el-step title="教室" description="维护座位和过道" :status="stepStatuses[3]" />
+            <el-step title="规则" description="配置权重" :status="stepStatuses[4]" />
+            <el-step title="方案" description="生成、微调、导出" :status="stepStatuses[5]" />
           </el-steps>
         </el-card>
       </el-col>
@@ -113,6 +115,7 @@
 </template>
 
 <script setup name="Index">
+import { computed, onMounted, ref } from "vue"
 import { useRouter } from "vue-router"
 import {
   CircleCheck,
@@ -125,8 +128,30 @@ import {
   Upload,
   UserFilled
 } from "@element-plus/icons-vue"
+import { listClass } from "@/api/seating/class"
+import { listStudent } from "@/api/seating/student"
+import { listExam } from "@/api/seating/exam"
+import { listClassroom } from "@/api/seating/classroom"
+import { listRule } from "@/api/seating/rule"
+import { listPlan } from "@/api/seating/plan"
 
 const router = useRouter()
+const activeStep = ref(0)
+const stepStatuses = ref(["wait", "wait", "wait", "wait", "wait", "wait"])
+const isReady = ref(false)
+const summaryCounts = ref({
+  classCount: 0,
+  studentCount: 0,
+  planCount: 0
+})
+
+const statusHintText = computed(() => {
+  const { classCount, studentCount, planCount } = summaryCounts.value
+  if (classCount > 0 || studentCount > 0 || planCount > 0) {
+    return `当前状态：已维护 ${classCount} 个班级、${studentCount} 名学生、${planCount} 个座位方案`
+  }
+  return "当前状态：完成数据准备后即可开始排座"
+})
 
 const moduleCards = [
   { title: "班级管理", description: "维护学段、年级、学期和班级科目", path: "/seating/class", icon: School },
@@ -147,6 +172,31 @@ const todoItems = [
 function goPage(path) {
   router.push(path)
 }
+
+function loadOverviewProgress() {
+  Promise.allSettled([
+    listClass({ pageNum: 1, pageSize: 1 }),
+    listStudent({ pageNum: 1, pageSize: 1 }),
+    listExam({ pageNum: 1, pageSize: 1 }),
+    listClassroom({ pageNum: 1, pageSize: 1 }),
+    listRule({ pageNum: 1, pageSize: 1 }),
+    listPlan({ pageNum: 1, pageSize: 1 })
+  ]).then(results => {
+    const totals = results.map(item => item.status === "fulfilled" ? Number(item.value?.total || (item.value?.rows || []).length || 0) : 0)
+    summaryCounts.value = {
+      classCount: totals[0],
+      studentCount: totals[1],
+      planCount: totals[5]
+    }
+    stepStatuses.value = totals.map(total => total > 0 ? "success" : "wait")
+    isReady.value = (totals[0] > 0 && totals[1] > 0 && totals[3] > 0) || totals[5] > 0
+    activeStep.value = totals.filter(total => total > 0).length
+  })
+}
+
+onMounted(() => {
+  loadOverviewProgress()
+})
 </script>
 
 <style scoped lang="scss">

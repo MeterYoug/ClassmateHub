@@ -255,6 +255,19 @@ class SeatStudentScoreServiceImplTest
         assertTrue(ex.getMessage().contains("第 2 行：学号列不能为空"), ex.getMessage());
     }
 
+    @Test
+    void batchUpdateImportShouldRefreshRanksOnlyOnce() throws Exception
+    {
+        withExistingScore("{\"语文\":60,\"数学\":80,\"英语\":70,\"科学\":90}", null);
+        MockMultipartFile file = workbook(ALL_HEADERS,
+            new String[] { "202601001", "测试学生", "92", "88", "85", "95" });
+
+        service.importScores(1L, file, true, "tester");
+
+        verify(scoreMapper, times(1)).updateSeatStudentScore(any());
+        verify(scoreMapper, times(1)).selectSeatStudentScoreList(any());
+    }
+
     private void withExistingScore(String subjectScores, String remark)
     {
         SeatStudentScore existing = new SeatStudentScore();

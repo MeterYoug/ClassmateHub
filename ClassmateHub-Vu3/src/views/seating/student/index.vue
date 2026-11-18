@@ -443,7 +443,7 @@ function getList() {
 
 /** 查询启用班级选项 */
 function getClassOptions() {
-  return listClass({ status: "0" }).then(response => {
+  return listClass({ status: "0", pageNum: 1, pageSize: 1000 }).then(response => {
     classOptions.value = response.rows
   })
 }

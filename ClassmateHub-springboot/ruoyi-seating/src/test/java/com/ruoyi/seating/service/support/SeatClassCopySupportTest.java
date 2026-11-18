@@ -4,8 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import com.ruoyi.seating.domain.SeatClassroom;
 
 class SeatClassCopySupportTest
@@ -54,5 +58,30 @@ class SeatClassCopySupportTest
 
         assertNull(SeatClassCopySupport.selectPrimaryClassroom(Arrays.asList(classroom)));
         assertNull(SeatClassCopySupport.selectPrimaryClassroom(null));
+    }
+
+    @Test
+    void remapRuleConfigStudentIdsShouldMapToCopiedStudentIds()
+    {
+        String configJson = "{\"studentIds\":[101,102,999],\"frontRows\":2}";
+        Map<Long, Long> studentIdMap = Map.of(101L, 201L, 102L, 202L);
+
+        String remapped = SeatClassCopySupport.remapRuleConfigStudentIds(configJson, studentIdMap);
+        JSONObject parsed = JSON.parseObject(remapped);
+
+        assertEquals(2, parsed.getIntValue("frontRows"));
+        assertEquals(List.of(201L, 202L), parsed.getList("studentIds", Long.class));
+    }
+
+    @Test
+    void remapRuleConfigStudentIdsShouldClearStudentIdsWhenStudentsNotCopied()
+    {
+        String configJson = "{\"studentIds\":[101,102],\"frontRows\":3}";
+
+        String remapped = SeatClassCopySupport.remapRuleConfigStudentIds(configJson, Collections.emptyMap());
+        JSONObject parsed = JSON.parseObject(remapped);
+
+        assertEquals(3, parsed.getIntValue("frontRows"));
+        assertEquals(Collections.emptyList(), parsed.getList("studentIds", Long.class));
     }
 }
